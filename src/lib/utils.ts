@@ -10,7 +10,8 @@ import {clingo_remote_on, clingo_remote_uuid, processing_index, server_url} from
 import {get} from "svelte/store";
 import {Base64} from "js-base64";
 import {v4 as uuidv4} from 'uuid';
-import {toJson} from 'really-relaxed-json';
+import { toJson } from 'really-relaxed-json';
+import {JSONPath} from "jsonpath-plus";
 
 const dom_purify_config = new DOMPurifyConfig(consts);
 
@@ -459,6 +460,7 @@ export class Utils extends BaseUtils {
     }
 
     static async markdown_expand_mustache_queries(part, message, index) {
+        console.log("Markdown entered");
         message = this.__preprocess_mustache(message);
         const matches = message.matchAll(/\{\{([=*+-]?)((\\}}|(?!}}).)*)}}/gs);
         const persistent_atoms = [];
@@ -466,6 +468,8 @@ export class Utils extends BaseUtils {
             for (const the_match of matches) {
                 const mode = the_match[1].trim();
                 const match = the_match[2].trim().replaceAll('\\}', '}');
+
+                console.log(match);
 
                 if (mode === '-') {
                     if (match) {
@@ -476,14 +480,64 @@ export class Utils extends BaseUtils {
                     continue;
                 }
 
+                if (match.startsWith('json/')) {
+                    console.log("it's a json")
+                    const [_, jsonInput, ...jsonQueries] = match.split('/');
+
+                    if (!jsonInput || jsonQueries.length === 0) {
+                        throw Error(`#${index}. json/* requires a JSON input and at least one JSONPath query.`);
+                    }
+
+                    console.log("JsonInput: "+jsonInput)
+
+                    console.log("JsonQuery: "+jsonQueries)
+
+                    const jsonData = JSON.parse(jsonInput);
+                    const jsonFacts = [];
+                    
+                    function convertToFacts(obj, prefix = "") {
+                        console.log("Obj: " + obj)
+                        for (const key in obj) {
+                            console.log("key: "+key)
+                            const newKey = prefix ? `${prefix}.${key}` : key;
+                            console.log("newkey: "+newKey)
+                            if (typeof obj[key] === "object") {
+                                convertToFacts(obj[key], newKey);
+                            } else {
+                                jsonFacts.push(`json("${newKey}", "${obj[key]}").`);
+                            }
+                        }
+                    }
+
+                    convertToFacts(jsonData);
+
+                    console.log(jsonFacts);
+
+                    const jsonAtoms = jsonFacts.map(fact => { predicate: "json"; terms: []; str: fact})
+
+                    const jsonQueriesLogic = jsonQueries.map(query => `jsonpath("${query}").`).join('\n');
+
+                    console.log(jsonQueriesLogic);
+
+                    part.push(...jsonFacts);
+                    part.push(jsonQueriesLogic);
+                }
+
+                console.log(part);
                 const inline = ['=', '+'].includes(mode);
                 const program = part.map(atom => atom.predicate || atom.functor ? `${atom.str}.` : `__const__(${atom.str}).`).join('\n') + '\n#show.\n' +
                     (inline ? `#show ${match}.` : match);
+                
+                console.log("Program" + program);
+                
                 let query_answer = await Utils.search_models(program, 1, true, true);
+                console.log("Query Answer"+query_answer);
                 if (query_answer.length !== 1) {
                     throw Error(`#${index}. Expected at least one model, ${query_answer.length} found`);
                 }
                 query_answer = query_answer[0]
+                console.log(mode);
+                console.log(query_answer);
                 if (mode === '+' || mode === '*') {
                     persistent_atoms.push(...query_answer);
                     message = message.replace(the_match[0], '');
@@ -496,6 +550,8 @@ export class Utils extends BaseUtils {
     }
 
     static markdown_process_match(query_answer, index) {
+        console.log("Answer: "+query_answer);
+
         const output_predicates = [
             'base64', 'qrcode', 'png', 'gif', 'jpeg', 'th', 'tr', 'ol', 'ul', 'matrix', 'tree',
         ];
@@ -712,7 +768,7 @@ export class Utils extends BaseUtils {
 
                     matrix[row][col-1] = value;
                 }
-            }
+            } 
         });
         if (matrix !== null) {
             replacement.push(matrix.map((row, index) => {
