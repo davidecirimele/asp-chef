@@ -53,4 +53,20 @@ what the 1, 2!
 		`);
 	});
 
+	test("json", async () => {
+		await check(recipe,`
+		foo(2).
+		foo(1).
+				`, `
+		what the {{
+		#show (X,) : foo(X).
+		#show sort(1). 
+		#show separator(", ").
+		}}!		
+				`, `
+		what the 1, 2!
+				`
+		);
+	});
+
 });

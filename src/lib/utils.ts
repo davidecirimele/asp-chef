@@ -335,6 +335,12 @@ export class Utils extends BaseUtils {
     }
 
     static parse_atom(atom: string) {
+        console.log("ATOM IN PARSE ATOM: " + atom)
+        
+        if (typeof atom === 'string' && /^[A-Z]/.test(atom)) {
+            atom = "\"" + atom + "\"";
+        }
+
         return PARSER.parse(atom);
     }
 
@@ -462,14 +468,18 @@ export class Utils extends BaseUtils {
     static async markdown_expand_mustache_queries(part, message, index) {
         console.log("Markdown entered");
         message = this.__preprocess_mustache(message);
+        console.log("Message: " + message)
+        
         const matches = message.matchAll(/\{\{([=*+-]?)((\\}}|(?!}}).)*)}}/gs);
         const persistent_atoms = [];
+        let query_answer = [];
+        
         if (matches !== null) {
+            const initial_message = message
             for (const the_match of matches) {
+                console.log("SONO NEL FOR PER: "+the_match)
                 const mode = the_match[1].trim();
                 const match = the_match[2].trim().replaceAll('\\}', '}');
-
-                console.log(match);
 
                 if (mode === '-') {
                     if (match) {
@@ -480,64 +490,69 @@ export class Utils extends BaseUtils {
                     continue;
                 }
 
-                if (match.startsWith('json/')) {
-                    console.log("it's a json")
-                    const [_, jsonInput, ...jsonQueries] = match.split('/');
-
-                    if (!jsonInput || jsonQueries.length === 0) {
-                        throw Error(`#${index}. json/* requires a JSON input and at least one JSONPath query.`);
-                    }
-
-                    console.log("JsonInput: "+jsonInput)
-
-                    console.log("JsonQuery: "+jsonQueries)
-
-                    const jsonData = JSON.parse(jsonInput);
-                    const jsonFacts = [];
-                    
-                    function convertToFacts(obj, prefix = "") {
-                        console.log("Obj: " + obj)
-                        for (const key in obj) {
-                            console.log("key: "+key)
-                            const newKey = prefix ? `${prefix}.${key}` : key;
-                            console.log("newkey: "+newKey)
-                            if (typeof obj[key] === "object") {
-                                convertToFacts(obj[key], newKey);
-                            } else {
-                                jsonFacts.push(`json("${newKey}", "${obj[key]}").`);
-                            }
+                if (match.startsWith('json')) {
+                    let encodedJSONString = part.map(atom => atom.predicate || atom.functor ? `${atom.str}.` : `__json__(${atom.str}).`).join('\n');
+                    let decodedJSONStrings = [];
+                    const base64Regex = /__base64__\("([^"]+)"\)/g;
+                    const stringMatches = [...encodedJSONString.matchAll(base64Regex)];
+                    stringMatches.forEach(encodedInputString => {
+                        console.log("Input base64 string: " + encodedInputString[1])
+                        try {
+                            const decodedJSONString = Base64.decode(encodedInputString[1]);
+                            console.log("Decoded JSON string: " + decodedJSONString);
+                            decodedJSONStrings = [...decodedJSONStrings, decodedJSONString.trim()]
+                        } catch (error) {
+                            console.error("Errore nella decodifica della stringa Base64:", error);
                         }
+                    })
+
+                    console.log("RIMUOVO DAL JSON IL MESSAGGIO: " + initial_message);
+                    const JSONString = decodedJSONStrings.join("\n");
+                    const noMustacheQueriesString = JSONString.replace(initial_message, "").trim();
+    
+                    console.log("Stringa senza query mustache: " + noMustacheQueriesString);
+    
+                    const start = noMustacheQueriesString.indexOf('{');
+                    const end = noMustacheQueriesString.lastIndexOf('}');
+                    let jsonString = "";
+                   
+    
+                    if (start !== -1 && end !== -1) {
+                        jsonString = noMustacheQueriesString.slice(start, end + 1).trim();
+                        console.log("JSON: " + jsonString);
+                    } else {
+                        console.error("JSON non trovato nella stringa!");
                     }
 
-                    convertToFacts(jsonData);
+                    console.log("SONO PRIMA DEL PARSE")
 
-                    console.log(jsonFacts);
+                    const jsonObject = JSON.parse(jsonString);
 
-                    const jsonAtoms = jsonFacts.map(fact => { predicate: "json"; terms: []; str: fact})
+                    console.log("SONO DOPO DEL PARSE")
 
-                    const jsonQueriesLogic = jsonQueries.map(query => `jsonpath("${query}").`).join('\n');
-
-                    console.log(jsonQueriesLogic);
-
-                    part.push(...jsonFacts);
-                    part.push(jsonQueriesLogic);
-                }
-
-                console.log(part);
-                const inline = ['=', '+'].includes(mode);
-                const program = part.map(atom => atom.predicate || atom.functor ? `${atom.str}.` : `__const__(${atom.str}).`).join('\n') + '\n#show.\n' +
-                    (inline ? `#show ${match}.` : match);
+                    const jpathquery = the_match[2].match(/json\s*:\s*(\$.+)/);
+                    const result = JSONPath({ path: jpathquery[1], json: jsonObject });
+                    console.log("Result :" + result);
+                    query_answer = [result.toString()];
+                    
+                    
+                } else {
                 
-                console.log("Program" + program);
+                    const inline = ['=', '+'].includes(mode);
+            
+                    const program = part.map(atom => atom.predicate || atom.functor ? `${atom.str}.` : `__const__(${atom.str}).`).join('\n') + '\n#show.\n' +
+                        (inline ? `#show ${match}.` : match);
+                 
+                    console.log("Program: " + program);
                 
-                let query_answer = await Utils.search_models(program, 1, true, true);
-                console.log("Query Answer"+query_answer);
-                if (query_answer.length !== 1) {
-                    throw Error(`#${index}. Expected at least one model, ${query_answer.length} found`);
+                    query_answer = await Utils.search_models(program, 1, true, true);
+                
+                    if (query_answer.length !== 1) {
+                        throw Error(`#${index}. Expected at least one model, ${query_answer.length} found`);
+                    }
+                    query_answer = query_answer[0]
                 }
-                query_answer = query_answer[0]
-                console.log(mode);
-                console.log(query_answer);
+            
                 if (mode === '+' || mode === '*') {
                     persistent_atoms.push(...query_answer);
                     message = message.replace(the_match[0], '');
@@ -550,10 +565,9 @@ export class Utils extends BaseUtils {
     }
 
     static markdown_process_match(query_answer, index) {
-        console.log("Answer: "+query_answer);
-
+        console.log("QueryANSWER: " + query_answer);
         const output_predicates = [
-            'base64', 'qrcode', 'png', 'gif', 'jpeg', 'th', 'tr', 'ol', 'ul', 'matrix', 'tree',
+            'base64', 'qrcode', 'png', 'gif', 'jpeg', 'th', 'tr', 'ol', 'ul', 'matrix', 'tree', 'json'
         ];
 
         let matrix = null;
@@ -565,7 +579,10 @@ export class Utils extends BaseUtils {
 
         const replacement = [];
         let output_atoms = [];
+        console.log("ATOMS QA: " + query_answer);
         Utils.parse_atoms(query_answer).forEach(atom => {
+            console.log("ATOM: "+atom)
+            console.log("CISONO: " + query_answer);
             if (atom.functor === undefined && atom.predicate === undefined) {
                 atom.functor = '';
                 atom.terms = [atom];
@@ -717,7 +734,11 @@ export class Utils extends BaseUtils {
                     return res.replace(tree.children_on, replacement);
                 }
                 replacement.push(`${prefix}${tree_string(tree.root)}${suffix}`);
-            } else if (atom.predicate === 'qrcode') {
+            } else if (atom.predicate === 'json') {
+                console.log("NEL JSON OUTPUT")
+                replacement.push(`${query_answer}`);
+            }
+            else if (atom.predicate === 'qrcode') {
                 if (atom.terms.length !== 1) {
                     Utils.snackbar(`Wrong number of terms in #${index}. Markdown: ${atom.str}`);
                 } else {
@@ -1061,7 +1082,7 @@ end
         // Override console methods
         console.log = (...args) => {
             originalConsole.log(...args);
-            logToPage("log", ...args);
+            //logToPage("log", ...args);
         };
 
         console.warn = (...args) => {

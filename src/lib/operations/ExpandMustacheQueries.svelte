@@ -19,7 +19,9 @@
                         res_part.push(atom);
                     } else {
                         const content = Base64.decode(atom.terms[0].string);
+                        console.log("content: "+content);
                         const expanded = await Utils.expand_mustache_queries(part, content, index, options.recursively);
+                        console.log("expanded: "+expanded);
                         res_part.push(Utils.parse_atom(`${options.predicate}("${Base64.encode(expanded)}")`));
                     }
                 }
