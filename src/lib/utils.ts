@@ -337,7 +337,7 @@ export class Utils extends BaseUtils {
     static parse_atom(atom: string) {
         console.log("ATOM IN PARSE ATOM: " + atom)
         
-        if (typeof atom === 'string' && /^[A-Z]/.test(atom)) {
+        if (/^[A-Z]/.test(atom)) {
             atom = "\"" + atom + "\"";
         }
 
@@ -345,6 +345,8 @@ export class Utils extends BaseUtils {
     }
 
     static parse_atoms(atoms: string[]) {
+        console.log("ATOMS IN PARSE ATOMS: "+atoms)
+
         return atoms.map(atom => this.parse_atom(atom));
     }
 
@@ -475,7 +477,6 @@ export class Utils extends BaseUtils {
         let query_answer = [];
         
         if (matches !== null) {
-            const initial_message = message
             for (const the_match of matches) {
                 console.log("SONO NEL FOR PER: "+the_match)
                 const mode = the_match[1].trim();
@@ -506,35 +507,50 @@ export class Utils extends BaseUtils {
                         }
                     })
 
-                    console.log("RIMUOVO DAL JSON IL MESSAGGIO: " + initial_message);
-                    const JSONString = decodedJSONStrings.join("\n");
-                    const noMustacheQueriesString = JSONString.replace(initial_message, "").trim();
-    
-                    console.log("Stringa senza query mustache: " + noMustacheQueriesString);
-    
-                    const start = noMustacheQueriesString.indexOf('{');
-                    const end = noMustacheQueriesString.lastIndexOf('}');
-                    let jsonString = "";
-                   
-    
-                    if (start !== -1 && end !== -1) {
-                        jsonString = noMustacheQueriesString.slice(start, end + 1).trim();
-                        console.log("JSON: " + jsonString);
-                    } else {
-                        console.error("JSON non trovato nella stringa!");
+                    const JSONs = decodedJSONStrings.flatMap(decoded => this.extract_json_blocks(decoded));
+                    
+                    if (JSONs.length === 0) {
+                        console.log("No JSON found")
                     }
 
                     console.log("SONO PRIMA DEL PARSE")
 
-                    const jsonObject = JSON.parse(jsonString);
+                    let jsonObjects = [];
+
+                    JSONs.forEach(json => {
+                        console.log("JSON NEL FOREACH :"+json)
+                        jsonObjects = [...jsonObjects, JSON.parse(json)];
+                    });
 
                     console.log("SONO DOPO DEL PARSE")
 
-                    const jpathquery = the_match[2].match(/json\s*:\s*(\$.+)/);
-                    const result = JSONPath({ path: jpathquery[1], json: jsonObject });
-                    console.log("Result :" + result);
-                    query_answer = [result.toString()];
+                    console.log("JSON VALIDI: " + jsonObjects);
+
+                    const jpathqueries = the_match[2].match(/json\s*:\s*(.+)/);
+
+                    let result = [];
+                    let jsonPaths = [];
+
+                    if (jpathqueries && jpathqueries[1]) {
+                        console.log("query jp: " + jpathqueries[1]);
+                        jsonPaths = jpathqueries[1]
+                            .split(',')
+                            .map(path => path.trim())
+                            .filter(path => path.startsWith('$'));
+                        
+                        console.log("jsonPaths: ",jsonPaths + typeof jsonPaths);
+                    } else {
+                        console.log("Nessun JSONPath trovato");
+                    }
                     
+                    jsonPaths.forEach(jpquery => {
+                        console.log("GIRO NEL FOR PER " + jpquery)
+                        jsonObjects.forEach(json => { 
+                            result = [...result, JSONPath({ path: jpquery, json: json }).toString() ];
+                        });
+                    });
+                    console.log("Result :" + result);
+                    query_answer = [`json("${result.join(',')}")`];
                     
                 } else {
                 
@@ -564,6 +580,41 @@ export class Utils extends BaseUtils {
         return message;
     }
 
+    static extract_json_blocks(text: string) {
+        console.log("JSON Candidate: " + text);
+        const results = [];
+        const stack = [];
+        let startIndex = -1;
+    
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+    
+            if (char === '{' || char === '[') {
+                if (stack.length === 0) {
+                    startIndex = i;
+                }
+                stack.push(char);
+            } else if (char === '}' || char === ']') {
+                if (stack.length === 0) continue;
+                const open = stack.pop();
+                if ((open === '{' && char !== '}') || (open === '[' && char !== ']')) {
+                    stack.length = 0;
+                } else if (stack.length === 0 && startIndex !== -1) {
+                    const candidate = text.slice(startIndex, i + 1);
+                    try {
+                        const json = JSON.parse(candidate);
+                        results.push(candidate);
+                    } catch (e) {
+                        //ignore
+                    }
+                    startIndex = -1;
+                }
+            }
+        }
+
+        return results;
+    }
+
     static markdown_process_match(query_answer, index) {
         console.log("QueryANSWER: " + query_answer);
         const output_predicates = [
@@ -583,7 +634,9 @@ export class Utils extends BaseUtils {
         Utils.parse_atoms(query_answer).forEach(atom => {
             console.log("ATOM: "+atom)
             console.log("CISONO: " + query_answer);
+            console.log("ATOM PREDICATE: " + atom.predicate);
             if (atom.functor === undefined && atom.predicate === undefined) {
+                console.log("NO PREDICATE")
                 atom.functor = '';
                 atom.terms = [atom];
             }
@@ -721,6 +774,7 @@ export class Utils extends BaseUtils {
 
         output_atoms.forEach(atom => {
             const terms = atom.terms.map(term => term.string !== undefined ? this.replace_escaped_chars(term.string) : term.str);
+            console.log("TERMS: " + terms);
             if (atom.functor === '') {
                 replacement.push(prefix + terms.join(term_separator) + suffix);
             } else if (atom.predicate === 'base64') {
@@ -734,9 +788,6 @@ export class Utils extends BaseUtils {
                     return res.replace(tree.children_on, replacement);
                 }
                 replacement.push(`${prefix}${tree_string(tree.root)}${suffix}`);
-            } else if (atom.predicate === 'json') {
-                console.log("NEL JSON OUTPUT")
-                replacement.push(`${query_answer}`);
             }
             else if (atom.predicate === 'qrcode') {
                 if (atom.terms.length !== 1) {
@@ -744,7 +795,11 @@ export class Utils extends BaseUtils {
                 } else {
                     replacement.push(`${prefix}[${terms.join(term_separator)}](qrcode)${suffix}`);
                 }
-            } else if (atom.predicate === 'png' || atom.predicate === 'gif' || atom.predicate === 'jpeg') {
+            } else if (atom.predicate === 'json') {
+                console.log("SONO NEL JSON OUTPUT: "+terms)
+                replacement.push(`${terms.join(term_separator)}`);
+            } 
+            else if (atom.predicate === 'png' || atom.predicate === 'gif' || atom.predicate === 'jpeg') {
                 if (atom.terms.length !== 1) {
                     Utils.snackbar(`Wrong number of terms in #${index}. Markdown: ${atom.str}`);
                 } else {
