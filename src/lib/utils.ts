@@ -498,40 +498,6 @@ export class Utils extends BaseUtils {
         return message;
     }
 
-    static extract_json_blocks(text: string) {
-        const results = [];
-        const stack = [];
-        let startIndex = -1;
-    
-        for (let i = 0; i < text.length; i++) {
-            const char = text[i];
-    
-            if (char === '{' || char === '[') {
-                if (stack.length === 0) {
-                    startIndex = i;
-                }
-                stack.push(char);
-            } else if (char === '}' || char === ']') {
-                if (stack.length === 0) continue;
-                const open = stack.pop();
-                if ((open === '{' && char !== '}') || (open === '[' && char !== ']')) {
-                    stack.length = 0;
-                } else if (stack.length === 0 && startIndex !== -1) {
-                    const candidate = text.slice(startIndex, i + 1);
-                    try {
-                        const json = JSON.parse(candidate);
-                        results.push(candidate);
-                    } catch (e) {
-                        //ignore
-                    }
-                    startIndex = -1;
-                }
-            }
-        }
-
-        return results;
-    }
-
     static markdown_process_match(part, query_answer, index) {
         const output_predicates = [
             'base64', 'qrcode', 'png', 'gif', 'jpeg', 'th', 'tr', 'ol', 'ul', 'matrix', 'tree', 'json'
@@ -721,9 +687,7 @@ export class Utils extends BaseUtils {
                 } else {
                     replacement.push(`${prefix}[${terms.join(term_separator)}](qrcode)${suffix}`);
                 }
-            } else if (atom.predicate === 'json') {
-                let encodedJSONString = part.map(atom => atom.predicate || atom.functor ? `${atom.str}.` : `__json__(${atom.str}).`).join('\n');
-                 
+            } else if (atom.predicate === 'json') { 
                 const jsonRegex = /json\((?:[^)]*?,\s*)*?([_a-zA-Z][_a-zA-Z0-9]*)(?=\s*(?:,|\)))/g;
 
                 const jsonPredicate = [...atom.str.matchAll(jsonRegex).map(m => m[1])]
