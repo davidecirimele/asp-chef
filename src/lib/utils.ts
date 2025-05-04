@@ -12,6 +12,7 @@ import {Base64} from "js-base64";
 import {v4 as uuidv4} from 'uuid';
 import { toJson } from 'really-relaxed-json';
 import {JSONPath} from "jsonpath-plus";
+import { Base } from 'survey-core';
 
 const dom_purify_config = new DOMPurifyConfig(consts);
 
@@ -335,10 +336,6 @@ export class Utils extends BaseUtils {
     }
 
     static parse_atom(atom: string) {
-        if (/^[A-Z]/.test(atom)) {
-            atom = "\"" + atom + "\"";
-        }
-
         return PARSER.parse(atom);
     }
 
@@ -465,11 +462,8 @@ export class Utils extends BaseUtils {
 
     static async markdown_expand_mustache_queries(part, message, index) {
         message = this.__preprocess_mustache(message);
-
         const matches = message.matchAll(/\{\{([=*+-]?)((\\}}|(?!}}).)*)}}/gs);
         const persistent_atoms = [];
-        let query_answer = [];
-        
         if (matches !== null) {
             for (const the_match of matches) {
                 const mode = the_match[1].trim();
@@ -484,70 +478,20 @@ export class Utils extends BaseUtils {
                     continue;
                 }
 
-                if (match.startsWith('json')) {
-                    let encodedJSONString = part.map(atom => atom.predicate || atom.functor ? `${atom.str}.` : `__json__(${atom.str}).`).join('\n');
-                    let decodedJSONStrings = [];
-                    const base64Regex = /__base64__\("([^"]+)"\)/g;
-                    const stringMatches = [...encodedJSONString.matchAll(base64Regex)];
-                    stringMatches.forEach(encodedInputString => {
-                        try {
-                            const decodedJSONString = Base64.decode(encodedInputString[1]);
-                            decodedJSONStrings = [...decodedJSONStrings, decodedJSONString.trim()]
-                        } catch (error) {
-                            console.error("Errore nella decodifica della stringa Base64:", error);
-                        }
-                    })
+                const inline = ['=', '+'].includes(mode);
+                const program = part.map(atom => atom.predicate || atom.functor ? `${atom.str}.` : `__const__(${atom.str}).`).join('\n') + '\n#show.\n' +
+                    (inline ? `#show ${match}.` : match);
+                let query_answer = await Utils.search_models(program, 1, true, true);
 
-                    const JSONs = decodedJSONStrings.flatMap(decoded => this.extract_json_blocks(decoded));
-                    
-                    if (JSONs.length === 0) {
-                        console.log("No JSON found")
-                    }
-
-                    let jsonObjects = [];
-
-                    JSONs.forEach(json => {
-                        jsonObjects = [...jsonObjects, JSON.parse(json)];
-                    });
-
-                    const jpathqueries = the_match[2].match(/json\s*:\s*(.+)/);
-
-                    let result = [];
-                    let jsonPaths = [];
-
-                    if (jpathqueries && jpathqueries[1]) {
-                        jsonPaths = jpathqueries[1].split(',').map(path => path.trim()).filter(path => path.startsWith('$'));
-                    } else {
-                        console.log("No JSONPath found");
-                    }
-                    
-                    jsonPaths.forEach(jpquery => {
-                        jsonObjects.forEach(json => { 
-                            result = [...result, JSONPath({ path: jpquery, json: json }).toString() ];
-                        });
-                    });
-                    query_answer = [`json("${result.join(',')}")`];
-                    
-                } else {
-                
-                    const inline = ['=', '+'].includes(mode);
-            
-                    const program = part.map(atom => atom.predicate || atom.functor ? `${atom.str}.` : `__const__(${atom.str}).`).join('\n') + '\n#show.\n' +
-                        (inline ? `#show ${match}.` : match);
-                    
-                    query_answer = await Utils.search_models(program, 1, true, true);
-                
-                    if (query_answer.length !== 1) {
-                        throw Error(`#${index}. Expected at least one model, ${query_answer.length} found`);
-                    }
-                    query_answer = query_answer[0]
+                if (query_answer.length !== 1) {
+                    throw Error(`#${index}. Expected at least one model, ${query_answer.length} found`);
                 }
-            
+                query_answer = query_answer[0]
                 if (mode === '+' || mode === '*') {
                     persistent_atoms.push(...query_answer);
                     message = message.replace(the_match[0], '');
                 } else {
-                    message = message.replace(the_match[0], Utils.markdown_process_match([...persistent_atoms, ...query_answer], index));
+                    message = message.replace(the_match[0], Utils.markdown_process_match(part, [...persistent_atoms, ...query_answer], index));
                 }
             }
         }
@@ -588,7 +532,7 @@ export class Utils extends BaseUtils {
         return results;
     }
 
-    static markdown_process_match(query_answer, index) {
+    static markdown_process_match(part, query_answer, index) {
         const output_predicates = [
             'base64', 'qrcode', 'png', 'gif', 'jpeg', 'th', 'tr', 'ol', 'ul', 'matrix', 'tree', 'json'
         ];
@@ -602,7 +546,6 @@ export class Utils extends BaseUtils {
 
         const replacement = [];
         let output_atoms = [];
-
         Utils.parse_atoms(query_answer).forEach(atom => {
             if (atom.functor === undefined && atom.predicate === undefined) {
                 atom.functor = '';
@@ -731,6 +674,19 @@ export class Utils extends BaseUtils {
             return true;
         });
 
+        // handle json atoms
+        output_atoms = output_atoms.filter(atom => {
+            if (atom.predicate !== 'json') {
+                return true;
+            }
+            if (atom.terms.length === 0) {
+                Utils.snackbar(`Invalid atom in \#${index}: ${atom.str}`);
+                return false;
+            }
+            
+            return true;
+        });
+
         // sort atoms
         output_atoms = _.orderBy(output_atoms, [atom => {
             if (atom.predicate === 'th') {
@@ -747,25 +703,58 @@ export class Utils extends BaseUtils {
             } else if (atom.predicate === 'base64') {
                 replacement.push(`${prefix}${terms.map(term => Base64.decode(term)).join(term_separator)}${suffix}`);
             } else if (atom.predicate === 'tree') {
-                const tree = trees.get(atom.terms[0].str);
-                function tree_string(node: string) {
-                    const res = tree.nodes[node];
-                    const replacement = !tree.links[node] || tree.links[node].length === 0 ? '' :
-                        tree.links[node].map(tree_string).join(tree.separator);
-                    return res.replace(tree.children_on, replacement);
+                if (atom.terms.length >= 2 && atom.terms[1].functor === 'root') {
+                    const tree = trees.get(atom.terms[0].str);
+
+                    function tree_string(node: string) {
+                        const res = tree.nodes[node];
+                        const replacement = !tree.links[node] || tree.links[node].length === 0 ? '' :
+                            tree.links[node].map(tree_string).join(tree.separator);
+                        return res.replace(tree.children_on, replacement);
+                    }
+
+                    replacement.push(`${prefix}${tree_string(tree.root)}${suffix}`);
                 }
-                replacement.push(`${prefix}${tree_string(tree.root)}${suffix}`);
-            }
-            else if (atom.predicate === 'qrcode') {
+            } else if (atom.predicate === 'qrcode') {
                 if (atom.terms.length !== 1) {
                     Utils.snackbar(`Wrong number of terms in #${index}. Markdown: ${atom.str}`);
                 } else {
                     replacement.push(`${prefix}[${terms.join(term_separator)}](qrcode)${suffix}`);
                 }
             } else if (atom.predicate === 'json') {
-                replacement.push(`${terms.join(term_separator)}`);
-            } 
-            else if (atom.predicate === 'png' || atom.predicate === 'gif' || atom.predicate === 'jpeg') {
+                let encodedJSONString = part.map(atom => atom.predicate || atom.functor ? `${atom.str}.` : `__json__(${atom.str}).`).join('\n');
+                 
+                const jsonRegex = /json\((?:[^)]*?,\s*)*?([_a-zA-Z][_a-zA-Z0-9]*)(?=\s*(?:,|\)))/g;
+
+                const jsonPredicate = [...atom.str.matchAll(jsonRegex).map(m => m[1])]
+                        
+                const candidateJsons = part.filter(atom => atom.predicate === jsonPredicate[0]);
+
+                const jsonObjects = [];
+                candidateJsons.forEach(atom => {
+                    atom.terms.forEach(term => {
+                        try {
+                            const decodedString = Base64.decode(term.str);
+                            const json = JSON.parse(decodedString);
+                            jsonObjects.push(json);
+                        } catch (e) {
+                            //ignore
+                        }
+                    });       
+                });
+
+                const jsonPathQueries = atom.terms.map(term => term.str).filter(str => typeof str === 'string' && /^"\$\.[\w\.\[\]'"-]+"$/.test(str)).map(str => str.slice(1, -1));
+
+                const result = [];
+
+                jsonPathQueries.forEach(jpquery => {
+                    jsonObjects.forEach(json => { 
+                        result.push(JSONPath({ path: jpquery, json: json }));
+                    });
+                });
+
+                replacement.push(`${result.join(term_separator)}`);
+            } else if (atom.predicate === 'png' || atom.predicate === 'gif' || atom.predicate === 'jpeg') {
                 if (atom.terms.length !== 1) {
                     Utils.snackbar(`Wrong number of terms in #${index}. Markdown: ${atom.str}`);
                 } else {
@@ -810,7 +799,7 @@ export class Utils extends BaseUtils {
 
                     matrix[row][col-1] = value;
                 }
-            } 
+            }
         });
         if (matrix !== null) {
             replacement.push(matrix.map((row, index) => {
