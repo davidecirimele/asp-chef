@@ -8,11 +8,10 @@ import ClingoWorker from '$lib/clingo.worker?worker';
 import JavascriptWorker from '$lib/javascript.worker?worker';
 import {clingo_remote_on, clingo_remote_uuid, processing_index, server_url} from "$lib/stores";
 import {get} from "svelte/store";
-import {Base64} from "js-base64";
+import {Base64, decode} from "js-base64";
 import {v4 as uuidv4} from 'uuid';
 import { toJson } from 'really-relaxed-json';
-import {JSONPath} from "jsonpath-plus";
-import { Base } from 'survey-core';
+import { JSONPath } from "jsonpath-plus";
 
 const dom_purify_config = new DOMPurifyConfig(consts);
 
@@ -421,6 +420,47 @@ export class Utils extends BaseUtils {
         }
     }
 
+    static compare_jsons(a, b) {
+        if (a === b) return true;
+        if (typeof a !== typeof b) return false;
+        if (typeof a !== "object" || a === null || b === null) return false;
+
+        const keysA = Object.keys(a);
+        const keysB = Object.keys(b);
+        if (keysA.length !== keysB.length) return false;
+
+        return keysA.every(key => this.compare_jsons(a[key], b[key]));
+    }
+
+    static parseArray(array: string) {
+
+    }
+
+    static extract_json_objects(input, predicate) {
+        const candidate_jsons = input[0].filter(atom => atom.predicate === predicate);
+        let data = [];
+
+        candidate_jsons.forEach(atom => {
+            atom.terms.forEach(json => {
+                if (json.string !== "") {
+                    try {
+                        const decodedInput = JSON.parse(Base64.decode(json.str).trim());
+                        if (Array.isArray(decodedInput)) {
+                            data = [...data, ...decodedInput];
+                        }
+                        else {
+                            data.push(decodedInput);
+                        }
+                    } catch (error) {
+                        console.log(error);
+                    }
+                }
+            });
+        });
+        
+        return data;
+    }
+
     private static __preprocess_mustache(message) {
         const matches = message.matchAll(/\{\{([f]?)"(((?!"}}).)*)"}}/gs);
         if (matches !== null) {
@@ -645,7 +685,7 @@ export class Utils extends BaseUtils {
             if (atom.predicate !== 'json') {
                 return true;
             }
-            if (atom.terms.length === 0) {
+            if (atom.terms.length < 2) {
                 Utils.snackbar(`Invalid atom in \#${index}: ${atom.str}`);
                 return false;
             }
@@ -687,37 +727,50 @@ export class Utils extends BaseUtils {
                 } else {
                     replacement.push(`${prefix}[${terms.join(term_separator)}](qrcode)${suffix}`);
                 }
-            } else if (atom.predicate === 'json') { 
+            }else if (atom.predicate === 'json') { 
                 const jsonRegex = /json\((?:[^)]*?,\s*)*?([_a-zA-Z][_a-zA-Z0-9]*)(?=\s*(?:,|\)))/g;
 
                 const jsonPredicate = [...atom.str.matchAll(jsonRegex).map(m => m[1])]
                         
                 const candidateJsons = part.filter(atom => atom.predicate === jsonPredicate[0]);
 
-                const jsonObjects = [];
+                let jsonObjects = [];
+
                 candidateJsons.forEach(atom => {
-                    atom.terms.forEach(term => {
-                        try {
-                            const decodedString = Base64.decode(term.str);
-                            const json = JSON.parse(decodedString);
-                            jsonObjects.push(json);
-                        } catch (e) {
-                            //ignore
+                    atom.terms.forEach(json => {
+                        if (json.string !== "") {
+                            try {
+                                const decodedInput = JSON.parse(Base64.decode(json.str).trim());
+                                if (Array.isArray(decodedInput)) {
+                                    jsonObjects = [...jsonObjects, ...decodedInput];
+                                }
+                                else {
+                                    jsonObjects.push(decodedInput);
+                                }
+                            } catch (error) {
+                                console.log(error);
+                            }
                         }
-                    });       
-                });
-
-                const jsonPathQueries = atom.terms.map(term => term.str).filter(str => typeof str === 'string' && /^"\$\.[\w\.\[\]'"-]+"$/.test(str)).map(str => str.slice(1, -1));
-
-                const result = [];
-
-                jsonPathQueries.forEach(jpquery => {
-                    jsonObjects.forEach(json => { 
-                        result.push(JSONPath({ path: jpquery, json: json }));
                     });
                 });
 
-                replacement.push(`${result.join(term_separator)}`);
+                const result = [];
+
+                atom.terms.forEach(term => {
+                        try {
+                            const extracted = JSONPath({ path: term.string, json: jsonObjects });
+                            if (extracted.length === 0) {
+                                jsonObjects.forEach(json => {
+                                    extracted.push(JSONPath({ path: term.string, json: json }));
+                                })
+                            }
+                            extracted.forEach(obj => result.push(obj));
+                        } catch (err) {
+                            //Ignore
+                        }
+                    });
+
+                replacement.push(`${result}`);
             } else if (atom.predicate === 'png' || atom.predicate === 'gif' || atom.predicate === 'jpeg') {
                 if (atom.terms.length !== 1) {
                     Utils.snackbar(`Wrong number of terms in #${index}. Markdown: ${atom.str}`);
@@ -887,7 +940,7 @@ function ${prefix}upper(s)
 end
 
 function ${prefix}double_quote(s)
-  return string.format("\\"%s\\"", s.string)
+  return string.format("\\"%s\\"", string.gsub(s.string,"\\"","\\\\\\""))
 end
 
 function ${prefix}tostring(value)

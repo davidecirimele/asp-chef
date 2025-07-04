@@ -4,6 +4,8 @@ import {get} from "svelte/store";
 import {server_url} from "$lib/stores";
 
 export class Dumbo {
+    private static __core_templates = null;
+
     public static get PREDICATE() {
         return "__dumbo__";
     }
@@ -19,7 +21,7 @@ export class Dumbo {
         return Utils.parse_atom(`${predicate}(${prefix}"${encoded_term}")`);
     }
 
-    public static async fetch(url, data, ) {
+    public static async fetch(url, data) {
         const response = await fetch(`${get(server_url)}/dumbo/${url}`, {
             method: "POST",
             mode: "cors",
@@ -33,5 +35,44 @@ export class Dumbo {
             throw new Error(json.error);
         }
         return json;
+    }
+
+    public static async fetch_core_templates() {
+        if (this.__core_templates === null) {
+            const templates = new Map();
+            const names = await Dumbo.fetch('template/core-template/', {});
+            for (const name of names) {
+                const template = await Dumbo.fetch("template/core-template/", {name: name});
+                const predicates = template.predicates.map(pred => `\`${pred}\``).join(', ');
+                template.documentation = `__Predicates:__ ${predicates}\n\n` + template.documentation.replaceAll('\n', '\n\n').replaceAll('\\n', '\n');
+                templates.set(name, template);
+            }
+            this.__core_templates = templates;
+        }
+        return [...this.__core_templates.keys()];
+    }
+
+    public static core_template_documentation(template: string) {
+        try {
+            return this.__core_templates.get(template).documentation;
+        } catch (e) {
+            return "";
+        }
+    }
+
+    public static core_template_predicates(template: string) {
+        try {
+            return this.__core_templates.get(template).predicates;
+        } catch (e) {
+            return [];
+        }
+    }
+
+    public static core_template_program(template: string) {
+        try {
+            return this.__core_templates.get(template).program;
+        } catch (e) {
+            return [];
+        }
     }
 }
