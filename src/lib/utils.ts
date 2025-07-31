@@ -1112,10 +1112,10 @@ end
         }
 
         // Override console methods
-        /*console.log = (...args) => {
+        console.log = (...args) => {
             originalConsole.log(...args);
             logToPage("log", ...args);
-        };*/
+        };
 
         console.warn = (...args) => {
             originalConsole.warn(...args);

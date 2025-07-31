@@ -34,19 +34,15 @@
 		}
 
 		return filtered.map((part, index) => {
-			console.log("Processing index:", index);
-			console.log("options.data[index]:", options.data[index]);
 
 			if (options.data[index] !== null) {
 				const data_length = input[index]
 					.filter(atom => atom.predicate === options.predicate)
 					.length;
 
-				console.log("Data length:", data_length);
 
 				const output_atoms = options.data[index]
 					.filter((data, data_index) => {
-						console.log(`Checking data at [${index}][${data_index}]`, data);
 						return !!data;
 					})
 					.map(data =>
@@ -55,28 +51,12 @@
 						)
 					);
 
-				console.log("Output atoms for index", index, output_atoms);
-
 				return [...part, ...output_atoms];
 			}
 
 			return part;
 		});
 	});
-
-	/*Recipe.register_operation_type(operation, async (input, options, index, id) => {
-       try {
-           listeners.get(id)(input);
-       } catch (error) { /* component not mounted, possibly because of headless mode  }
-
-       const result = options.echo ? input : input.map(part => part.filter(atom => atom.predicate !== options.predicate));
-       console.log("RESULT", result);
-       
-       const res = options.data && options.data.length > 0 ? result.map(part => [...part, Utils.parse_atom(`${options.output_predicate}("${Base64.encode(JSON.stringify(options.data?.map(result => result.output).filter(result => result!=null)))}")`)]) : result;
-       console.log("RES", res);
-       
-       return res;
-   });*/
 </script>
 
 <script>
@@ -128,13 +108,10 @@
 		}catch(err){
 			console.log(err);
 		}
-		console.log("SURVEYS", options.survey_data);
 	}
 
 	function init_data(models) {
-		console.log("MODELLI", models);
 		models.forEach((model, idx) => {
-			console.log("INDEX", idx);
 			if(!options.data[idx]){
 				options.data[idx] = [];
 			}
@@ -154,52 +131,13 @@
 				console.log(err);
 			}		
 		});
-		console.log("OPTIONS.DATA INIT", options.data);
 	}
 		
-		/*
-		for (let i = 0; i < options.survey_data.length; i++) {
-			let model = options.survey_data[i];
-
-			try{
-				options.survey_data[i] = model
-					.filter(
-						(json) =>
-							Object.values(jsons).flat().some((new_json) => Utils.compare_jsons(json.input, new_json)) ||
-							(json.input === null && json.predicate === options.input_predicate)
-					)
-					.sort((a, b) => {
-						if (a.input === null && b.input !== null) return 1;
-						if (a.input !== null && b.input === null) return -1;
-						return 0;
-					});
-
-				if (options.survey_data[i].length === 0) {
-					options.survey_data[i].push({
-						predicate: options.input_predicate,
-						input: null,
-						value: null,
-					});
-					if(!options.instance_indexes[i])
-						options.instance_indexes[i] = [];
-					options.instance_indexes[i].push(1);
-				}
-
-				options.survey_data[i] = model;
-			}catch(err){
-				console.log(err);
-			}
-		}*/
-
-		
-	
-
 	function edit() {
 		Recipe.edit_operation(id, index, options);
 	}
 
 	function set_data(model_index, configuration_index, data) {
-		console.log("DATI DA SALVARE", data);
 		
 		Object.values(options.survey_data[model_index + 1]).forEach((item, index) => {
 			options.data[model_index][index] = item.value;
@@ -207,9 +145,17 @@
 
 		options.data[model_index][configuration_index-1] = data;
 		options.survey_data[model_index + 1][configuration_index].value = data;
+	}
 
-		console.log("SURVEYS SET DATA", options.survey_data);
-		console.log("DATA SET DATA", options.data);
+	function removeInstance(model_index, instanceToRemove) {
+		const updated = {};
+		let newIndex = 1;
+		for (let i = 1; i < Object.keys(options.survey_data[model_index]).length+1; i++) {
+			if (i === instanceToRemove) continue;
+			updated[newIndex++] = options.survey_data[model_index][i];
+			options.data.splice(i-1, 1);
+		}
+		options.survey_data[model_index] = updated;
 	}
 
 	onMount(() => {
@@ -310,7 +256,7 @@
 									size="lg"
 									outline={true}
 									on:click={() => {
-										options.instance_indexes[model_index] -= 1;
+										options.instance_indexes[model_index] > 1 ? options.instance_indexes[model_index] -= 1 : options.instance_indexes[model_index];
 										edit();
 									}}><Icon name="arrow-left" /></Button
 								>
@@ -320,7 +266,7 @@
 									size="lg"
 									outline={true}
 									on:click={() => {
-										options.instance_indexes[model_index] += 1;
+										options.instance_indexes[model_index] < Math.max(...Object.keys(options.survey_data[model_index + 1] || {}).map(Number)) ? options.instance_indexes[model_index] += 1 : options.instance_indexes[model_index];
 										edit();
 									}}><Icon name="arrow-right" /></Button
 								>
@@ -353,13 +299,13 @@
 							</Popover>
 							<Popover
 								title="Remove instance"
-								value="Remove instance #{configuration_index+1} from the Survey"
+								value="Remove instance #{options.instance_indexes[model_index]} from the Model"
 							>
 								<Button
 									size="lg"
 									outline={true}
 									on:click={() => {
-										
+										removeInstance(model_index+1, options.instance_indexes[model_index]);
 										edit();
 									}}><Icon name="trash" /></Button
 								>
