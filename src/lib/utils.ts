@@ -437,27 +437,32 @@ export class Utils extends BaseUtils {
     }
 
     static extract_json_objects(input, predicate) {
-        const candidate_jsons = input[0].filter(atom => atom.predicate === predicate);
-        let data = [];
+        let data = {}, index = 0;
 
-        candidate_jsons.forEach(atom => {
-            atom.terms.forEach(json => {
-                if (json.string !== "") {
-                    try {
-                        const decodedInput = JSON.parse(Base64.decode(json.str).trim());
-                        if (Array.isArray(decodedInput)) {
-                            data = [...data, ...decodedInput];
+        input.forEach(model => {
+            const candidate_jsons = model.filter(atom => atom.predicate === predicate);
+            data[index] = [];
+
+
+            candidate_jsons.forEach(atom => {
+                atom.terms.forEach(json => {
+                    if (json.string !== "") {
+                        try {
+                            const decodedInput = JSON.parse(Base64.decode(json.str).trim());
+                            if (Array.isArray(decodedInput)) {
+                                data[index] = [...data[index], ...decodedInput];
+                            }
+                            else {
+                                data[index].push(decodedInput);
+                            }
+                        } catch (error) {
+                            console.log(error);
                         }
-                        else {
-                            data.push(decodedInput);
-                        }
-                    } catch (error) {
-                        console.log(error);
                     }
-                }
+                });
             });
+            index++;
         });
-        
         return data;
     }
 
@@ -748,7 +753,7 @@ export class Utils extends BaseUtils {
                                     jsonObjects.push(decodedInput);
                                 }
                             } catch (error) {
-                                console.log(error);
+                                //ignore
                             }
                         }
                     });
@@ -1107,10 +1112,10 @@ end
         }
 
         // Override console methods
-        console.log = (...args) => {
+        /*console.log = (...args) => {
             originalConsole.log(...args);
             logToPage("log", ...args);
-        };
+        };*/
 
         console.warn = (...args) => {
             originalConsole.warn(...args);
