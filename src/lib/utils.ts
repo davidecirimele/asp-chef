@@ -447,7 +447,7 @@ export class Utils extends BaseUtils {
             candidate_jsons.forEach(atom => {
                 atom.terms.forEach(json => {
                     if (json.string !== "") {
-                        try {
+                        /*try {
                             const decodedInput = JSON.parse(Base64.decode(json.str).trim());
                             if (Array.isArray(decodedInput)) {
                                 data[index] = [...data[index], ...decodedInput];
@@ -457,6 +457,22 @@ export class Utils extends BaseUtils {
                             }
                         } catch (error) {
                             console.log(error);
+                        }*/
+                        try {
+                            const decoded = Base64.decode(json.str).trim();
+
+                            const possibleJsons = decoded.split(/(?<=\})\s*(?=\{)/g);
+
+                            possibleJsons.forEach(entry => {
+                                const parsed = JSON.parse(entry);
+                                if (Array.isArray(parsed)) {
+                                    data[index].push(...parsed);
+                                } else {
+                                    data[index].push(parsed);
+                                }
+                            });
+                        } catch (error) {
+                            console.log("Errore di parsing JSON multiplo:", error);
                         }
                     }
                 });
@@ -762,20 +778,26 @@ export class Utils extends BaseUtils {
                 const result = [];
 
                 atom.terms.forEach(term => {
-                        try {
-                            const extracted = JSONPath({ path: term.string, json: jsonObjects });
-                            if (extracted.length === 0) {
-                                jsonObjects.forEach(json => {
-                                    extracted.push(JSONPath({ path: term.string, json: json }));
-                                })
-                            }
-                            extracted.forEach(obj => result.push(obj));
-                        } catch (err) {
-                            //Ignore
-                        }
+                try {
+                    let extracted = JSONPath({ path: term.string, json: jsonObjects });
+                    if (extracted.length === 0) {
+                    jsonObjects.forEach(json => {
+                        extracted = extracted.concat(JSONPath({ path: term.string, json: json }));
                     });
+                    }
+                    extracted.flat(Infinity).forEach(obj => {
+                        result.push(obj);
+                    });
+                } catch (err) {
+                    // ignore
+                }
+                });
 
-                replacement.push(`${result}`);
+                if (result.length === 1) {
+                    replacement.push(JSON.stringify(result[0]));
+                } else {
+                    replacement.push(JSON.stringify(result));
+                }
             } else if (atom.predicate === 'png' || atom.predicate === 'gif' || atom.predicate === 'jpeg') {
                 if (atom.terms.length !== 1) {
                     Utils.snackbar(`Wrong number of terms in #${index}. Markdown: ${atom.str}`);
@@ -1117,10 +1139,11 @@ end
             logToPage("log", ...args);
         };
 
+        /*
         console.warn = (...args) => {
             originalConsole.warn(...args);
             logToPage("warn", ...args);
-        };
+        };*/
 
         console.error = (...args) => {
             originalConsole.error(...args);

@@ -13,7 +13,7 @@
 		show_model_index: false,
 		data: [],
 		survey_data: {},
-		instance_indexes: []
+		instance_indexes: [],
 	};
 
 	const listeners = new Map();
@@ -43,7 +43,10 @@
 
 				const output_atoms = options.data[index]
 					.filter((data, data_index) => {
-						return !!data;
+						if(data_index+1 === options.instance_indexes[index])
+						{
+							return !!data;
+						}
 					})
 					.map(data =>
 						Utils.parse_atom(
@@ -82,8 +85,15 @@
 
 	let models = [];
 	let jsons = {};
+	let previousInput;
 
 	function populate_input(input) {
+		if(input !== previousInput){
+			options.survey_data = {};
+			options.instance_indexes = [];
+		}
+		previousInput = input;
+
 		jsons = Utils.extract_json_objects(input, options.input_predicate);
 
 		try{
@@ -144,6 +154,12 @@
 		});
 
 		options.data[model_index][configuration_index-1] = data;
+		if(!options.survey_data[model_index + 1][configuration_index])
+			options.survey_data[model_index + 1][configuration_index] = {
+						predicate: options.input_predicate,
+						input: null,
+						value: null,
+					}
 		options.survey_data[model_index + 1][configuration_index].value = data;
 	}
 
@@ -163,6 +179,11 @@
 			models = input;
 			populate_input(models);
 			init_data(models);
+			options.data.forEach((model, model_index)=>{
+				model.forEach((config, config_index)=>{
+					set_data(model_index, config_index+1, config);
+				});
+			});
 		});
 	});
 
@@ -228,7 +249,7 @@
 					<h6 class="text-center">Model #{model_index + 1}</h6>
 				{/if}
 				{#key model}
-					{#each model.filter((atom) => atom.predicate === options.predicate) as configuration, configuration_index}
+					{#each model.filter((atom) => atom.predicate === options.predicate) as configuration}
 
 					<InputGroup>
 						<InputGroupText>Instance #</InputGroupText>
