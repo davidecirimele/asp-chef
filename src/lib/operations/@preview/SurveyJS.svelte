@@ -85,13 +85,14 @@
 
 	let models = [];
 	let jsons = {};
-	let previousInput;
+	let previousInput = null;
 
 	function populate_input(input) {
 		if(input !== previousInput){
 			options.survey_data = {};
 			options.instance_indexes = [];
-			options.data = []
+			if(previousInput)
+				options.data = []
 		}
 		previousInput = input;
 
