@@ -91,6 +91,7 @@
 		if(input !== previousInput){
 			options.survey_data = {};
 			options.instance_indexes = [];
+			options.data = []
 		}
 		previousInput = input;
 
